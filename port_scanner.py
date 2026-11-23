@@ -22,7 +22,6 @@ class PendingTCPProbe:
 class PortScanner:
     DUMMY_PORT = 80
     BARRIER_TIMEOUT = 2.0
-    MAX_RETRIES = 2
 
     def __init__(
             self,
@@ -273,24 +272,49 @@ class PortScanner:
                 return "127.0.0.1"
 
     def _run_protocol_guessing(self):
-        probe_timeout = min(self.timeout, 1.0)
-        for target, result in list(self.results.items()):
-            if target.protocol == Protocol.TCP and result.status == PacketStatus.OPEN:
-                app_protocol = guess_tcp_protocol(self.target_ip, target.port, probe_timeout)
-                if app_protocol is not None:
-                    self.results[target] = ScannerResult(
-                        status=result.status,
-                        response_time_ms=result.response_time_ms,
-                        app_protocol=app_protocol,
-                    )
-            elif target.protocol == Protocol.UDP and result.status in (
-                    PacketStatus.OPEN,
-                    PacketStatus.OPEN_FILTERED,
-            ):
-                app_protocol = guess_udp_protocol(self.target_ip, target.port, probe_timeout)
-                if app_protocol is not None:
-                    self.results[target] = ScannerResult(
-                        status=PacketStatus.OPEN,
-                        response_time_ms=result.response_time_ms,
-                        app_protocol=app_protocol,
-                    )
+        probe_timeout = self.timeout
+
+        candidates: list[tuple[PortTarget, ScannerResult]] = []
+        with (self.lock):
+            for target, result in self.results.items():
+                if (
+                        target.protocol == Protocol.TCP
+                        and result.status == PacketStatus.OPEN
+                ) or (
+                        target.protocol == Protocol.UDP
+                        and result.status in (PacketStatus.OPEN, PacketStatus.OPEN_FILTERED)
+                ):
+                    candidates.append((target, result))
+
+        guess_futures = []
+        for target, result in candidates:
+            future = self.executor.submit(
+                self._guess_single_target,
+                target,
+                result,
+                probe_timeout,
+            )
+            guess_futures.append(future)
+
+        if guess_futures:
+            wait(guess_futures)
+
+    def _guess_single_target(
+            self,
+            target: PortTarget,
+            result: ScannerResult,
+            probe_timeout: float,
+    ) -> None:
+        app_protocol = None
+        if target.protocol == Protocol.TCP:
+            app_protocol = guess_tcp_protocol(self.target_ip, target.port, probe_timeout)
+        elif target.protocol == Protocol.UDP:
+            app_protocol = guess_udp_protocol(self.target_ip, target.port, probe_timeout)
+
+        if app_protocol is not None:
+            with self.lock:
+                self.results[target] = ScannerResult(
+                    status=PacketStatus.OPEN,
+                    response_time_ms=result.response_time_ms,
+                    app_protocol=app_protocol,
+                )
