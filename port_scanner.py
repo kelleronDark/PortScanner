@@ -22,7 +22,6 @@ class PendingTCPProbe:
 class PortScanner:
     DUMMY_PORT = 80
     BARRIER_TIMEOUT = 2.0
-    MAX_RETRIES = 2
 
     def __init__(
             self,
