@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "portscan"
+version = "0.1.0"
+requires-python = ">=3.15"
+
+[tool.setuptools]
+py-modules = ["main", "cli", "port_scanner", "models", "parsers", "tcp", "constants", "guesser"]
+
+[project.scripts]
+portscan = "main:main"
