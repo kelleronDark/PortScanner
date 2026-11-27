@@ -44,7 +44,7 @@ class PortScanner:
         self.lock = Lock()
         self.source_ip = self._get_source_ip(self.target_ip)
 
-        self.pending_tcp: Dict[int, PendingTCPProbe] = {}
+        self.pending_tcp: Dict[tuple[int, int], PendingTCPProbe] = {}
         self.pending_udp = set()
 
         self.results: Dict[PortTarget, ScannerResult] = {}
@@ -111,7 +111,7 @@ class PortScanner:
             server_ack_number = parsed_response.ack_number
 
             with self.lock:
-                probe = self.pending_tcp.get(local_port)
+                probe = self.pending_tcp.get((local_port, remote_port))
 
             if probe is None:
                 continue
@@ -133,13 +133,13 @@ class PortScanner:
                     target_port=expected_port,
                     source_ip=self.source_ip,
                     source_port=local_port,
-                    seq_number=parsed_response.ack_number,
+                    seq_number=server_ack_number,
                     flag=TCPFlags.RST,
                 )
                 sock.sendto(rst_packet.header_bytes, (self.target_ip, expected_port))
 
             with self.lock:
-                self.pending_tcp.pop(local_port, None)
+                self.pending_tcp.pop((local_port, expected_port), None)
                 self.results[PortTarget(expected_port, Protocol.TCP)] = ScannerResult(
                     status=parsed_response.status,
                     response_time_ms=(time.perf_counter() - sent_at_ms) * 1000
@@ -153,7 +153,7 @@ class PortScanner:
             self.results[target] = ScannerResult(
                 status=PacketStatus.FILTERED,
             )
-            self.pending_tcp[raw_tcp.source_port] = PendingTCPProbe(
+            self.pending_tcp[(raw_tcp.source_port, target.port)] = PendingTCPProbe(
                 target_port=target.port,
                 sent_packet=raw_tcp,
                 sent_at_ms=time.perf_counter()

@@ -41,12 +41,12 @@ def validate_num_threads(value: str) -> int:
 def validate_port_specification(value: str) -> list[PortRange]:
     normalized = value.strip().lower()
     if '/' not in normalized:
-        if normalized not in Protocol:
-            raise argparse.ArgumentTypeError(f"Invalid protocol specification: {value}")
-        return [(Protocol(normalized), MIN_PORT, MAX_PORT)]
+        if normalized in Protocol:
+            return [(Protocol(normalized), MIN_PORT, MAX_PORT)]
+        return _parse_port_list(normalized, [Protocol.TCP, Protocol.UDP], value)
 
     if normalized.count("/") != 1:
-        raise argparse.ArgumentTypeError(f"Invalid port specification format: {value}")
+            raise argparse.ArgumentTypeError(f"Invalid port specification format: {value}")
 
     protocol_str, ports_str = normalized.split("/")
     if protocol_str not in Protocol:
@@ -55,33 +55,7 @@ def validate_port_specification(value: str) -> list[PortRange]:
     if not ports_str:
         raise argparse.ArgumentTypeError(f"Empty ports in: {value}")
 
-    protocol = Protocol(protocol_str)
-    ranges: list[PortRange] = []
-
-    for chunk in ports_str.split(","):
-        if not chunk:
-            raise argparse.ArgumentTypeError(f"Empty port entry in: {value}")
-
-        if "-" not in chunk:
-            port = _parse_single_port(chunk)
-            ranges.append((protocol, port, port))
-            continue
-
-        if chunk.count("-") != 1:
-            raise argparse.ArgumentTypeError(f"Invalid port range: {chunk}")
-
-        start_str, end_str = chunk.split("-")
-        start_port = _parse_single_port(start_str)
-        end_port = _parse_single_port(end_str)
-
-        if start_port > end_port:
-            raise argparse.ArgumentTypeError(
-                f"Start port ({start_port}) cant be greater than end port ({end_port})"
-            )
-
-        ranges.append((protocol, start_port, end_port))
-
-    return ranges
+    return _parse_port_list(ports_str, [Protocol(protocol_str)], value)
 
 def _parse_single_port(raw_port: str) -> int:
     if not raw_port.isdigit():
@@ -106,7 +80,7 @@ def parse_args():
     parser.add_argument(
         'ports',
         type=validate_port_specification,
-        nargs='+',
+        nargs='*',
         help='Ports to scan (tcp/80, udp/3000-3100 and etc.)'
     )
     parser.add_argument(
@@ -135,7 +109,12 @@ def parse_args():
         help='Guess application layer protocol of the port (HTTP, DNS, ECHO)'
     )
 
-    return parser.parse_args()
+    args = parser.parse_args()
+    if not args.ports:
+        args.ports = [
+            [(Protocol.TCP, MIN_PORT, MAX_PORT), (Protocol.UDP, MIN_PORT, MAX_PORT)]
+        ]
+    return args
 
 def iter_target_ports(parsed_groups: list[list[PortRange]]) -> Iterator[PortTarget]:
     seen: set[tuple[Protocol, int]] = set()
@@ -147,3 +126,34 @@ def iter_target_ports(parsed_groups: list[list[PortRange]]) -> Iterator[PortTarg
                 if key not in seen:
                     seen.add(key)
                     yield PortTarget(port=port, protocol=protocol)
+
+def _parse_port_list(
+    ports_str: str, protocols: list[Protocol], original_value: str
+) -> list[PortRange]:
+    ranges: list[PortRange] = []
+    for chunk in ports_str.split(","):
+        if not chunk:
+            raise argparse.ArgumentTypeError(f"Empty port entry in: {original_value}")
+
+        if "-" not in chunk:
+            port = _parse_single_port(chunk)
+            for protocol in protocols:
+                ranges.append((protocol, port, port))
+            continue
+
+        if chunk.count("-") != 1:
+            raise argparse.ArgumentTypeError(f"Invalid port range: {chunk}")
+
+        start_str, end_str = chunk.split("-")
+        start_port = _parse_single_port(start_str)
+        end_port = _parse_single_port(end_str)
+
+        if start_port > end_port:
+            raise argparse.ArgumentTypeError(
+                f"Start port ({start_port}) cant be greater than end port ({end_port})"
+            )
+
+        for protocol in protocols:
+            ranges.append((protocol, start_port, end_port))
+
+    return ranges
